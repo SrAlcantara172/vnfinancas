@@ -9,12 +9,13 @@ export type Card = { id: string; name: string; limit: number; dueDay: number; la
 export type Purchase = { id: string; cardId: string; desc: string; amount: number; installments: number; month: string; category: string };
 export type Data = { incomes: Income[]; bills: Bill[]; transfers: Transfer[]; cards: Card[]; purchases: Purchase[] };
 type User = { id: string; email: string; name: string };
-type State = { user: User | null; authReady: boolean; month: string; hide: boolean; data: Data; error: string };
+export type Currency = "BRL" | "EUR";
+type State = { user: User | null; authReady: boolean; month: string; hide: boolean; data: Data; error: string; currency: Currency; rate: number; rateLive: boolean };
 
 const empty: Data = { incomes: [], bills: [], transfers: [], cards: [], purchases: [] };
 const today = new Date();
 export const ym = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-const initial: State = { user: null, authReady: false, month: ym(today), hide: false, data: empty, error: "" };
+const initial: State = { user: null, authReady: false, month: ym(today), hide: false, data: empty, error: "", currency: "BRL", rate: 6.15, rateLive: false };
 
 let state: State = initial;
 let started = false;
@@ -65,6 +66,42 @@ async function loadData() {
   }
 }
 
+// ---------- cotação EUR-BRL (cache de 30 min no localStorage, fallback 6.15) ----------
+const RATE_KEY = "vnfinancas:eurbrl";
+const RATE_TTL = 30 * 60 * 1000;
+const FALLBACK_RATE = 6.15;
+
+async function refreshRate() {
+  let cached: { rate: number; at: number } | null = null;
+  try {
+    const c = JSON.parse(localStorage.getItem(RATE_KEY) || "null");
+    if (c && Number.isFinite(c.rate) && c.rate > 0 && Number.isFinite(c.at)) cached = c;
+  } catch { /* ignore */ }
+  if (cached) {
+    const fresh = Date.now() - cached.at < RATE_TTL;
+    set({ rate: cached.rate, rateLive: fresh });
+    if (fresh) return;
+  }
+  try {
+    const r = await fetch("https://economia.awesomeapi.com.br/json/last/EUR-BRL");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const bid = Number((await r.json())?.EURBRL?.bid);
+    if (!Number.isFinite(bid) || bid <= 0) throw new Error("cotação inválida");
+    try { localStorage.setItem(RATE_KEY, JSON.stringify({ rate: bid, at: Date.now() })); } catch { /* ignore */ }
+    set({ rate: bid, rateLive: true });
+  } catch {
+    // sem rede: usa a última cotação guardada (se houver) ou o fallback
+    set({ rate: cached?.rate ?? FALLBACK_RATE, rateLive: false });
+  }
+}
+
+async function loadProfile() {
+  const userId = state.user?.id;
+  const { data, error } = await supabase.from("profiles").select("currency").single();
+  if (state.user?.id !== userId || error) return;
+  if (data?.currency === "EUR" || data?.currency === "BRL") set({ currency: data.currency });
+}
+
 function subscribeRealtime(userId: string) {
   if (channel) void supabase.removeChannel(channel);
   channel = supabase
@@ -78,14 +115,14 @@ async function applySession(session: Session | null) {
   if (!u) {
     if (channel) void supabase.removeChannel(channel);
     channel = null;
-    set({ user: null, data: empty, authReady: true, error: "" });
+    set({ user: null, data: empty, authReady: true, error: "", currency: "BRL" });
     return;
   }
   if (state.user?.id === u.id) return; // renovação de token, nada a fazer
   const meta = u.user_metadata as { name?: string } | undefined;
   const email = u.email ?? "";
   set({ user: { id: u.id, email, name: meta?.name?.trim() || email.split("@")[0]! }, data: empty, authReady: false, error: "" });
-  await loadData();
+  await Promise.all([loadData(), loadProfile()]);
   set({ authReady: true });
   subscribeRealtime(u.id);
 }
@@ -94,6 +131,8 @@ function start() {
   if (started || typeof window === "undefined") return;
   started = true;
   try { if (localStorage.getItem(HIDE_KEY) === "1") set({ hide: true }); } catch { /* ignore */ }
+  void refreshRate();
+  setInterval(() => { void refreshRate(); }, RATE_TTL);
   supabase.auth.onAuthStateChange((_event, session) => {
     // não chamar o Supabase direto dentro do callback (risco de deadlock)
     setTimeout(() => { void applySession(session); }, 0);
@@ -155,6 +194,16 @@ export const actions = {
     try { localStorage.setItem(HIDE_KEY, hide ? "1" : "0"); } catch { /* ignore */ }
   },
   clearError: () => set({ error: "" }),
+  setCurrency(c: Currency) {
+    const prev = state.currency;
+    const id = state.user?.id;
+    if (!id || c === prev) return;
+    set({ currency: c }); // troca na hora
+    const revert = (m: string) => set({ currency: prev, error: `Não foi possível salvar a moeda: ${m}` });
+    Promise.resolve(supabase.from("profiles").update({ currency: c }).eq("id", id))
+      .then(({ error }) => { if (error) revert(error.message); })
+      .catch((e: Error) => revert(e.message));
+  },
   add<K extends keyof Data>(k: K, item: Data[K][number]) {
     set({ data: { ...state.data, [k]: [...state.data[k], item] } });
     persist(() => supabase.from(k).insert(toDb(item)));
@@ -210,7 +259,14 @@ export function summary(d: Data, month: string) {
   const expenses = billsTotal + cards;
   return { income, billsTotal, billsPending, cards, expenses, transfersTotal, transfersPending, transfersCount: transfers.length, free: income - expenses - transfersTotal };
 }
-export const brl = (v: number, hide = false) => (hide ? "R$ •••••" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
+/** Formata um valor guardado em BRL, convertendo para a moeda escolhida (EUR = valor ÷ cotação). */
+export const brl = (v: number, hide = false) => {
+  const eur = state.currency === "EUR";
+  if (hide) return eur ? "€ •••••" : "R$ •••••";
+  return (eur ? v / state.rate : v).toLocaleString("pt-BR", { style: "currency", currency: eur ? "EUR" : "BRL" });
+};
+/** Converte o valor digitado na moeda escolhida para BRL (o que vai para o banco). */
+export const toBrl = (v: number) => Math.round((state.currency === "EUR" ? v * state.rate : v) * 100) / 100;
 export const monthLabel = (m: string) => {
   const [y, mo] = m.split("-").map(Number);
   return new Date(y!, mo! - 1, 1).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });

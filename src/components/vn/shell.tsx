@@ -33,6 +33,22 @@ export function MonthBar() {
   );
 }
 
+function CurrencySwitch() {
+  const { currency, rate, rateLive } = useVn();
+  const opts = [["BRL", "R$"], ["EUR", "€"]] as const;
+  const fmt = rate.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (
+    <div className="flex items-center gap-2">
+      <span className="hidden whitespace-nowrap text-xs text-muted-foreground sm:inline" title={rateLive ? "Cotação atualizada" : "Cotação estimada (sem conexão com a API)"}>1 € = R$ {fmt}{rateLive ? "" : " ~"}</span>
+      <div role="group" aria-label="Moeda" className="flex rounded-md border border-border bg-card p-0.5 text-xs">
+        {opts.map(([c, s]) => (
+          <button key={c} aria-pressed={currency === c} onClick={() => actions.setCurrency(c)} className={`rounded px-2 py-1 font-medium transition-colors ${currency === c ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>{s} {c}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function Shell({ title, children }: { title: string; children: ReactNode }) {
   const { user, authReady, error } = useVn();
   const navigate = useNavigate();
@@ -69,6 +85,7 @@ export function Shell({ title, children }: { title: string; children: ReactNode 
           <div className="md:hidden"><Logo /></div>
           <p className="hidden text-sm text-muted-foreground md:block">Meu espaço / <span className="text-foreground">{title}</span></p>
           <div className="flex items-center gap-2">
+            <CurrencySwitch />
             <button onClick={() => setPicker(true)} className="hidden items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 md:inline-flex"><Plus className="h-4 w-4" />Novo lançamento</button>
             <Link to="/integracao" aria-label="Integração MacroDroid" className="p-2 text-muted-foreground md:hidden"><Plug className="h-4 w-4" /></Link>
             <button aria-label="Sair" onClick={() => auth.signOut()} className="p-2 text-muted-foreground md:hidden"><LogOut className="h-4 w-4" /></button>
