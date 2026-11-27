@@ -26,7 +26,7 @@ export function EntryModal({ kind, onClose }: { kind: FormKind | null; onClose: 
       if (kind === "bill") actions.add("bills", { id: uid(), desc: text.parse(f.desc), amount: toBrl(money.parse(f.amount)), category: f.category || "Outros", due: f.due || todayIso, paid: f.paid === "on" });
       if (kind === "transfer") actions.add("transfers", { id: uid(), person: text.parse(f.person), amount: toBrl(money.parse(f.amount)), date: f.date || todayIso, done: false });
       if (kind === "card") {
-        const closingDay = z.coerce.number().int().min(1).max(31).parse(f.closingDay || 28);
+        const closingDay = z.coerce.number().int().min(1).max(31).parse(f.closingDay || 1);
         const invoiceMonth = f.invoiceMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(f.invoiceMonth) ? f.invoiceMonth : month;
         actions.add("cards", {
           id: uid(),
@@ -82,10 +82,10 @@ export function EntryModal({ kind, onClose }: { kind: FormKind | null; onClose: 
           <Field label="Nome do cartão"><input name="name" className="vn-input" placeholder="Nubank" /></Field>
           <Field label={`Limite (${sym})`}><input name="limit" type="number" step="0.01" className="vn-input" /></Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Dia de fechamento"><input name="closingDay" type="number" min={1} max={31} defaultValue={28} className="vn-input" /></Field>
+            <Field label="Melhor dia de compra"><input name="closingDay" type="number" min={1} max={31} placeholder="Ex: 3" className="vn-input" /></Field>
             <Field label="Dia de vencimento"><input name="dueDay" type="number" min={1} max={31} defaultValue={10} className="vn-input" /></Field>
           </div>
-          <Field label="Fatura aberta (mês)"><input name="invoiceMonth" type="month" defaultValue={month} className="vn-input" /></Field>
+          <Field label="Fatura que está recebendo compras"><input name="invoiceMonth" type="month" defaultValue={month} className="vn-input" /></Field>
           <Field label="Final do cartão (4 dígitos, para o webhook)"><input name="last4" inputMode="numeric" maxLength={4} pattern="\d{4}" className="vn-input" placeholder="1234" /></Field>
         </>}
         {kind === "purchase" && <>
@@ -100,7 +100,7 @@ export function EntryModal({ kind, onClose }: { kind: FormKind | null; onClose: 
             <Field label="Parcelas"><input name="installments" type="number" min={1} max={48} defaultValue={1} className="vn-input" /></Field>
           </div>
           {cat}
-          <Field label="Primeira fatura"><input key={defaultPurchaseMonth} name="month" type="month" defaultValue={defaultPurchaseMonth} className="vn-input" /></Field>
+          <Field label="Fatura de cobrança"><input key={defaultPurchaseMonth} name="month" type="month" defaultValue={defaultPurchaseMonth} className="vn-input" /></Field>
         </>}
         {err && <p className="mb-3 text-xs text-destructive">{err}</p>}
         <Btn type="submit" className="w-full">Salvar</Btn>

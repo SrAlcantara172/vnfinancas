@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ArrowUpRight, CalendarCheck2, CreditCard, Plus, Trash2 } from "lucide-react";
+import { useState, type FormEvent } from "react";
+import { ArrowUpRight, CalendarCheck2, ChevronLeft, ChevronRight, CreditCard, Pencil, Plus, Trash2 } from "lucide-react";
 import { Shell, MonthBar, useForm } from "@/components/vn/shell";
-import { Btn, CardBox, Empty } from "@/components/vn/ui";
-import { actions, addMonths, brl, installmentIn, invoice, monthDiff, monthLabel, usedLimit, useVn } from "@/lib/vn-store";
+import { Btn, CardBox, Empty, Field, Modal } from "@/components/vn/ui";
+import { actions, addMonths, brl, installmentIn, invoice, monthDiff, monthLabel, usedLimit, useVn, type Card } from "@/lib/vn-store";
 
 export const Route = createFileRoute("/cartoes")({
   head: () => ({ meta: [{ title: "Cartões de crédito — VnFinanças" }, { name: "description", content: "Cartões, faturas e compras parceladas." }, { property: "og:title", content: "Cartões de crédito — VnFinanças" }, { property: "og:description", content: "Cartões, faturas e compras parceladas." }] }),
@@ -12,6 +13,20 @@ export const Route = createFileRoute("/cartoes")({
 function Page() {
   const { data, month, hide } = useVn();
   const f = useForm();
+  const [editing, setEditing] = useState<Card | null>(null);
+
+  function saveEdit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!editing) return;
+    const fd = new FormData(e.currentTarget);
+    const closingDay = Math.min(31, Math.max(1, Number(fd.get("closingDay")) || 1));
+    const dueDay = Math.min(31, Math.max(1, Number(fd.get("dueDay")) || 10));
+    const rawInvoice = String(fd.get("invoiceMonth") || "").trim();
+    const invoiceMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(rawInvoice) ? rawInvoice : (editing.invoiceMonth || month);
+
+    actions.update("cards", editing.id, { closingDay, dueDay, invoiceMonth });
+    setEditing(null);
+  }
 
   return (
     <>
@@ -29,10 +44,10 @@ function Page() {
             <CardBox
               key={c.id}
               title={c.name}
-              sub={`Fecha dia ${c.closingDay ?? 28} · Vence dia ${c.dueDay}${c.last4 ? ` · final ${c.last4}` : ""}`}
+              sub={`Melhor dia ${c.closingDay ?? 1} · Vence dia ${c.dueDay}${c.last4 ? ` · final ${c.last4}` : ""}`}
               icon={<CreditCard className="h-4 w-4" />}
               action={
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <button
                     type="button"
                     onClick={() => {
@@ -45,11 +60,41 @@ function Page() {
                     <CalendarCheck2 className="h-3.5 w-3.5" />
                     Fechar fatura
                   </button>
-                  <button aria-label="Excluir cartão" onClick={() => actions.remove("cards", c.id)} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></button>
+                  <button
+                    type="button"
+                    aria-label="Editar datas do cartão"
+                    title="Editar melhor dia de compra e vencimento"
+                    onClick={() => setEditing(c)}
+                    className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                  <button aria-label="Excluir cartão" onClick={() => actions.remove("cards", c.id)} className="rounded p-1 text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></button>
                 </div>
               }
             >
-              <p className="mb-2 text-xs text-muted-foreground">Novas compras indo para: <span className="capitalize text-foreground">{monthLabel(activeInvoice)}</span></p>
+              <div className="mb-3 flex items-center justify-between rounded-md border border-border bg-background/50 px-2.5 py-1.5 text-xs">
+                <span className="text-muted-foreground">Novas compras caem em:</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    aria-label="Voltar mês da fatura aberta"
+                    onClick={() => actions.update("cards", c.id, { invoiceMonth: addMonths(activeInvoice, -1) })}
+                    className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </button>
+                  <span className="min-w-28 text-center font-medium capitalize text-foreground">{monthLabel(activeInvoice)}</span>
+                  <button
+                    type="button"
+                    aria-label="Avançar mês da fatura aberta"
+                    onClick={() => actions.update("cards", c.id, { invoiceMonth: nextInvoice })}
+                    className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
               <div className="mb-2 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full bg-primary" style={{ width: `${Math.min(100, (used / c.limit) * 100)}%` }} /></div>
               <div className="mb-4 grid grid-cols-3 gap-2 text-xs">
                 <div><p className="text-muted-foreground">Disponível</p><p className="font-medium">{brl(c.limit - used, hide)}</p></div>
@@ -80,6 +125,26 @@ function Page() {
           );
         })}
       </div>
+
+      <Modal open={!!editing} onClose={() => setEditing(null)} title={editing ? `Editar ${editing.name}` : "Editar cartão"}>
+        {editing && (
+          <form onSubmit={saveEdit}>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Melhor dia de compra">
+                <input name="closingDay" type="number" min={1} max={31} defaultValue={editing.closingDay ?? 1} className="vn-input" />
+              </Field>
+              <Field label="Dia de vencimento">
+                <input name="dueDay" type="number" min={1} max={31} defaultValue={editing.dueDay} className="vn-input" />
+              </Field>
+            </div>
+            <Field label="Fatura que está recebendo compras">
+              <input name="invoiceMonth" type="month" defaultValue={editing.invoiceMonth || month} className="vn-input" />
+            </Field>
+            <Btn type="submit" className="w-full">Salvar alterações</Btn>
+          </form>
+        )}
+      </Modal>
+
       {f.modal}
     </>
   );
