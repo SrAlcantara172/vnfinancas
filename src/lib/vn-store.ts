@@ -5,6 +5,7 @@ import { supabase } from "./supabase";
 export type Income = { id: string; desc: string; amount: number; month: string };
 export type Bill = { id: string; desc: string; amount: number; category: string; due: string; paid: boolean };
 export type Transfer = { id: string; person: string; amount: number; date: string; done: boolean };
+export type CardKind = "credit" | "meal";
 export type Card = {
   id: string;
   name: string;
@@ -13,8 +14,18 @@ export type Card = {
   closingDay?: number;
   invoiceMonth?: string;
   last4?: string;
+  kind?: CardKind;
 };
-export type Purchase = { id: string; cardId: string; desc: string; amount: number; installments: number; month: string; category: string };
+export type Purchase = {
+  id: string;
+  cardId: string;
+  desc: string;
+  amount: number;
+  installments: number;
+  month: string;
+  category: string;
+  recurring?: boolean;
+};
 export type Data = { incomes: Income[]; bills: Bill[]; transfers: Transfer[]; cards: Card[]; purchases: Purchase[] };
 type User = { id: string; email: string; name: string };
 export type Currency = "BRL" | "EUR";
@@ -61,8 +72,18 @@ const fromCard = (r: Row): Card => ({
   closingDay: r.closing_day ?? 28,
   invoiceMonth: r.invoice_month ?? undefined,
   last4: r.last4 ?? undefined,
+  kind: r.kind === "meal" ? "meal" : "credit",
 });
-const fromPurchase = (r: Row): Purchase => ({ id: r.id, cardId: r.card_id, desc: r.description, amount: Number(r.amount), installments: r.installments, month: r.month, category: r.category });
+const fromPurchase = (r: Row): Purchase => ({
+  id: r.id,
+  cardId: r.card_id,
+  desc: r.description,
+  amount: Number(r.amount),
+  installments: r.installments,
+  month: r.month,
+  category: r.category,
+  recurring: Boolean(r.recurring),
+});
 
 async function loadData() {
   const userId = state.user?.id;
@@ -239,7 +260,7 @@ export const actions = {
     persist(() => supabase.from(k).delete().eq("id", id));
   },
   moveToPaidBill(p: Purchase, month: string) {
-    const partAmount = Math.round((p.amount / p.installments) * 100) / 100;
+    const partAmount = p.recurring ? p.amount : Math.round((p.amount / p.installments) * 100) / 100;
     const todaySP = new Intl.DateTimeFormat("en-CA", {
       timeZone: "America/Sao_Paulo",
       year: "numeric",
@@ -249,12 +270,18 @@ export const actions = {
 
     const bill: Bill = {
       id: uid(),
-      desc: p.installments > 1 ? `${p.desc} (${monthDiff(p.month, month) + 1}/${p.installments})` : p.desc,
+      desc: !p.recurring && p.installments > 1 ? `${p.desc} (${monthDiff(p.month, month) + 1}/${p.installments})` : p.desc,
       amount: partAmount,
       category: p.category || "Outros",
       due: todaySP,
       paid: true,
     };
+
+    if (p.recurring) {
+      set({ data: { ...state.data, bills: [...state.data.bills, bill] } });
+      persist(() => supabase.from("bills").insert(toDb(bill)));
+      return;
+    }
 
     const remainingInstallments = p.installments - 1;
     const nextPurchases = remainingInstallments <= 0
@@ -294,15 +321,32 @@ export function monthDiff(a: string, b: string) {
   const [yb, mb] = b.split("-").map(Number);
   return (yb! - ya!) * 12 + (mb! - ma!);
 }
+export function isMealCard(d: Data, cardId: string) {
+  return d.cards.find((c) => c.id === cardId)?.kind === "meal";
+}
+/** Parcela/valor de uma compra que cai no mês informado (0 se não houver). */
 export function installmentIn(p: Purchase, month: string) {
-  const i = monthDiff(p.month, month);
-  return i >= 0 && i < p.installments ? p.amount / p.installments : 0;
+  const diff = monthDiff(p.month, month);
+  if (diff < 0) return 0;
+  if (p.recurring) return p.amount;
+  return diff < p.installments ? p.amount / p.installments : 0;
 }
 export function invoice(d: Data, cardId: string | null, month: string) {
-  return d.purchases.filter((p) => !cardId || p.cardId === cardId).reduce((s, p) => s + installmentIn(p, month), 0);
+  return d.purchases
+    .filter((p) => {
+      if (isMealCard(d, p.cardId)) return false;
+      return !cardId || p.cardId === cardId;
+    })
+    .reduce((s, p) => s + installmentIn(p, month), 0);
 }
+/** Total gasto em cartão refeição (acumulado). */
+export function mealSpent(d: Data, cardId: string) {
+  return d.purchases.filter((p) => p.cardId === cardId).reduce((s, p) => s + p.amount, 0);
+}
+/** Limite comprometido (cartão de crédito). */
 export function usedLimit(d: Data, cardId: string, month: string) {
   return d.purchases.filter((p) => p.cardId === cardId).reduce((s, p) => {
+    if (p.recurring) return s + p.amount;
     let t = 0;
     for (let i = 0; i < p.installments; i++) if (monthDiff(month, addMonths(p.month, i)) >= 0) t += p.amount / p.installments;
     return s + t;
