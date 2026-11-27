@@ -27,5 +27,5 @@ Pré-requisitos: Node.js e npm (ou Bun).
 
 ```bash
 git clone https://github.com/SrAlcantara172/vnfinancas.git
-cd vnfinan-as-dashboard
+cd vnfinancas
 npm install
