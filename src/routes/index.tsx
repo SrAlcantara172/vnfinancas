@@ -4,7 +4,7 @@ import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis
 import type { ReactNode } from "react";
 import { Shell, MonthBar } from "@/components/vn/shell";
 import { CardBox, Empty } from "@/components/vn/ui";
-import { actions, addMonths, billInstallmentNum, brl, installmentIn, invoice, isBillPaid, isInvoicePaid, isMealCard, mealAvailableInMonth, monthDiff, monthLabel, summary, usedLimit, useVn } from "@/lib/vn-store";
+import { actions, addMonths, billInstallmentNum, brl, installmentIn, invoice, invoicePending, isBillPaid, isInvoicePaid, isMealCard, mealAvailableInMonth, monthDiff, monthLabel, summary, usedLimit, useVn } from "@/lib/vn-store";
 
 export const Route = createFileRoute("/")({
   head: () => ({ meta: [
@@ -37,7 +37,7 @@ function freeMood(free: number, income: number) {
   };
 }
 
-function expensesMood(pending: number, total: number, hasOverdueOrSoon: boolean) {
+function expensesMood(pending: number, total: number, hasOverdue: boolean) {
   if (total <= 0) {
     return {
       text: "Nenhuma despesa registrada neste mês.",
@@ -50,7 +50,7 @@ function expensesMood(pending: number, total: number, hasOverdueOrSoon: boolean)
       tone: "text-success",
     };
   }
-  if (hasOverdueOrSoon) {
+  if (hasOverdue) {
     return {
       text: "Opa, ainda tem coisa pendente por aqui.",
       tone: "text-warning",
@@ -133,10 +133,19 @@ function Overview() {
     ...data.cards.filter((c) => c.kind !== "meal").flatMap((c) => [0, 1].map((k) => { const d = new Date(now.getFullYear(), now.getMonth() + k, c.dueDay); const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; return { id: c.id + k, name: `Fatura ${c.name}`, date: d, v: isInvoicePaid(c, m, data) ? 0 : invoice(data, c.id, m) }; })).filter((x) => inRange(x.date) && x.v > 0),
   ].sort((a, b) => +a.date - +b.date);
 
-  const hasOverdueOrSoon = dues.length > 0 || data.bills.some((b) => billInstallmentNum(b, month) > 0 && !isBillPaid(b, month) && new Date(b.due + "T00:00") < now);
+  const [selYear, selMonth] = month.split("-").map(Number);
+  const hasOverdueBill = data.bills.some((b) => billInstallmentNum(b, month) > 0 && !isBillPaid(b, month) && new Date(b.due + "T00:00") < now);
+  const hasOverdueCard = data.cards.some((c) => {
+    if (c.kind === "meal" || invoicePending(data, c.id, month) <= 0) return false;
+    const maxDay = new Date(selYear!, selMonth!, 0).getDate();
+    const dueDate = new Date(selYear!, selMonth! - 1, Math.min(c.dueDay, maxDay));
+    return dueDate < now;
+  });
+  const hasOverdue = hasOverdueBill || hasOverdueCard;
+
   const forecast = s.income - s.expenses - s.transfersTotal;
   const mood = freeMood(s.free, s.income);
-  const expMood = expensesMood(s.pendingTotal, s.expenses, hasOverdueOrSoon);
+  const expMood = expensesMood(s.pendingTotal, s.expenses, hasOverdue);
   const tip = { contentStyle: { background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }, formatter: (v: number) => brl(v, hide) };
 
   return (
