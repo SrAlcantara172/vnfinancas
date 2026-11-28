@@ -3,7 +3,7 @@ import { useState, type FormEvent } from "react";
 import { ArrowUpRight, CalendarCheck2, CheckCircle2, ChevronLeft, ChevronRight, CreditCard, Pencil, Plus, Repeat, Trash2, Utensils } from "lucide-react";
 import { Shell, MonthBar, useForm } from "@/components/vn/shell";
 import { Btn, CardBox, Empty, Field, Modal } from "@/components/vn/ui";
-import { actions, addMonths, brl, CATEGORIES, installmentIn, invoice, isInvoicePaid, mealSpent, monthDiff, monthLabel, toBrl, usedLimit, useVn, type Card, type Purchase } from "@/lib/vn-store";
+import { actions, addMonths, brl, CATEGORIES, installmentIn, invoice, isInvoicePaid, mealAvailableInMonth, monthDiff, monthLabel, toBrl, usedLimit, useVn, type Card, type Purchase } from "@/lib/vn-store";
 
 export const Route = createFileRoute("/cartoes")({
   head: () => ({ meta: [{ title: "Cartões de crédito — VnFinanças" }, { name: "description", content: "Cartões, faturas e compras parceladas." }, { property: "og:title", content: "Cartões de crédito — VnFinanças" }, { property: "og:description", content: "Cartões, faturas e compras parceladas." }] }),
@@ -70,14 +70,13 @@ function Page() {
       <div className="grid gap-4 lg:grid-cols-2">
         {data.cards.map((c) => {
           if (c.kind === "meal") {
-            const spent = mealSpent(data, c.id);
-            const remaining = c.limit - spent;
-            const mealItems = data.purchases.filter((p) => p.cardId === c.id);
+            const { available, carryover, spent, budget } = mealAvailableInMonth(data, c, month);
+            const mealItems = data.purchases.filter((p) => p.cardId === c.id && p.month === month);
             return (
               <CardBox
                 key={c.id}
                 title={c.name}
-                sub={`Vale-refeição${c.last4 ? ` · final ${c.last4}` : ""}`}
+                sub={`Vale-refeição · ${monthLabel(month)}${c.last4 ? ` · final ${c.last4}` : ""}`}
                 icon={<Utensils className="h-4 w-4" />}
                 action={
                   <button aria-label="Excluir cartão" onClick={() => actions.remove("cards", c.id)} className="rounded p-1 text-muted-foreground hover:text-destructive">
@@ -86,14 +85,18 @@ function Page() {
                 }
               >
                 <div className="mb-2 h-1.5 overflow-hidden rounded-full bg-muted">
-                  <div className="h-full bg-primary" style={{ width: `${Math.min(100, c.limit > 0 ? (spent / c.limit) * 100 : 0)}%` }} />
+                  <div className="h-full bg-primary" style={{ width: `${Math.min(100, budget > 0 ? (spent / budget) * 100 : 0)}%` }} />
                 </div>
                 <div className="mb-4 grid grid-cols-3 gap-2 text-xs">
-                  <div><p className="text-muted-foreground">Quanto ainda tem</p><p className={`font-medium ${remaining < 0 ? "text-destructive" : "text-success"}`}>{brl(remaining, hide)}</p></div>
+                  <div><p className="text-muted-foreground">Quanto ainda tem</p><p className={`font-medium ${available < 0 ? "text-destructive" : "text-success"}`}>{brl(available, hide)}</p></div>
                   <div><p className="text-muted-foreground">Quanto já gastou</p><p className="font-medium text-warning">{brl(spent, hide)}</p></div>
-                  <div><p className="text-muted-foreground">Saldo inicial</p><p className="font-medium">{brl(c.limit, hide)}</p></div>
+                  <div>
+                    <p className="text-muted-foreground">Saldo do mês</p>
+                    <p className="font-medium">{brl(budget, hide)}</p>
+                    {carryover > 0 && <p className="text-[11px] text-success">+{brl(carryover, hide)} do mês ant.</p>}
+                  </div>
                 </div>
-                {mealItems.length === 0 ? <Empty>Nenhum uso registrado.</Empty> : (
+                {mealItems.length === 0 ? <Empty>Nenhum uso registrado neste mês.</Empty> : (
                   <ul className="divide-y divide-border">
                     {mealItems.map((p) => (
                       <li key={p.id} className="flex items-center justify-between gap-3 py-2 text-sm">
@@ -274,9 +277,14 @@ function Page() {
                 <input name="desc" defaultValue={editingPurchase.desc} className="vn-input" />
               </Field>
               {isMeal ? (
-                <Field label={`Valor gasto (${sym})`}>
-                  <input name="amount" type="number" step="0.01" defaultValue={editingPurchase.amount} className="vn-input" />
-                </Field>
+                <>
+                  <Field label={`Valor gasto (${sym})`}>
+                    <input name="amount" type="number" step="0.01" defaultValue={editingPurchase.amount} className="vn-input" />
+                  </Field>
+                  <Field label="Mês do gasto">
+                    <input name="month" type="month" defaultValue={editingPurchase.month} className="vn-input" />
+                  </Field>
+                </>
               ) : (
                 <>
                   <label className="mb-3 flex items-center gap-2 text-sm">

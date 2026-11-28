@@ -4,7 +4,7 @@ import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis
 import type { ReactNode } from "react";
 import { Shell, MonthBar } from "@/components/vn/shell";
 import { CardBox, Empty } from "@/components/vn/ui";
-import { actions, addMonths, billInstallmentNum, brl, installmentIn, invoice, isInvoicePaid, isMealCard, mealSpent, monthDiff, monthLabel, summary, usedLimit, useVn } from "@/lib/vn-store";
+import { actions, addMonths, billInstallmentNum, brl, installmentIn, invoice, isInvoicePaid, isMealCard, mealAvailableInMonth, monthDiff, monthLabel, summary, usedLimit, useVn } from "@/lib/vn-store";
 
 export const Route = createFileRoute("/")({
   head: () => ({ meta: [
@@ -157,13 +157,15 @@ function Overview() {
           {data.cards.length === 0 ? <Empty>Nenhum cartão cadastrado.</Empty> : <div className="space-y-3">
             {data.cards.map((c) => {
               if (c.kind === "meal") {
-                const spent = mealSpent(data, c.id);
-                const remaining = c.limit - spent;
+                const { available, carryover, spent } = mealAvailableInMonth(data, c, month);
                 return (
                   <div key={c.id} className="rounded-lg border border-border p-3">
-                    <p className="mb-2 flex items-center gap-2 text-sm font-medium"><Utensils className="h-4 w-4 text-primary" />{c.name}</p>
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <p className="flex items-center gap-2 text-sm font-medium"><Utensils className="h-4 w-4 text-primary" />{c.name}</p>
+                      {carryover > 0 && <span className="text-[11px] text-success">+{brl(carryover, hide)} do mês ant.</span>}
+                    </div>
                     <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div><p className="text-muted-foreground">Quanto ainda tem</p><p className={remaining < 0 ? "text-destructive" : "text-success"}>{brl(remaining, hide)}</p></div>
+                      <div><p className="text-muted-foreground">Quanto ainda tem</p><p className={available < 0 ? "text-destructive" : "text-success"}>{brl(available, hide)}</p></div>
                       <div><p className="text-muted-foreground">Quanto já gastou</p><p className="text-warning">{brl(spent, hide)}</p></div>
                     </div>
                   </div>

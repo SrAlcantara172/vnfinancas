@@ -438,9 +438,36 @@ export function invoice(d: Data, cardId: string | null, month: string) {
     })
     .reduce((s, p) => s + installmentIn(p, month), 0);
 }
-/** Total gasto em cartão refeição (acumulado). */
-export function mealSpent(d: Data, cardId: string) {
-  return d.purchases.filter((p) => p.cardId === cardId).reduce((s, p) => s + p.amount, 0);
+/** Gasto no cartão refeição apenas no mês informado. */
+export function mealSpentInMonth(d: Data, cardId: string, month: string) {
+  return d.purchases
+    .filter((p) => p.cardId === cardId && p.month === month)
+    .reduce((s, p) => s + p.amount, 0);
+}
+/** Saldo disponível no cartão refeição no mês: recarga mensal + sobra do mês anterior - gasto do mês. */
+export function mealAvailableInMonth(d: Data, card: Card, month: string): { available: number; carryover: number; spent: number; budget: number } {
+  const baseRecharge = card.limit;
+  const monthsToWalk = Array.from(new Set(
+    d.purchases
+      .filter((p) => p.cardId === card.id && p.month < month)
+      .map((p) => p.month)
+  )).sort();
+
+  let carryover = 0;
+  if (monthsToWalk.length > 0) {
+    let cursor = monthsToWalk[0]!;
+    while (cursor < month) {
+      const spentPrev = mealSpentInMonth(d, card.id, cursor);
+      const availPrev = baseRecharge + carryover - spentPrev;
+      carryover = Math.max(0, Math.round(availPrev * 100) / 100);
+      cursor = addMonths(cursor, 1);
+    }
+  }
+
+  const spent = mealSpentInMonth(d, card.id, month);
+  const budget = Math.round((baseRecharge + carryover) * 100) / 100;
+  const available = Math.round((budget - spent) * 100) / 100;
+  return { available, carryover, spent, budget };
 }
 /** Limite comprometido (cartão de crédito). */
 export function usedLimit(d: Data, cardId: string, month: string) {
