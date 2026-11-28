@@ -15,6 +15,7 @@ export type Card = {
   invoiceMonth?: string;
   last4?: string;
   kind?: CardKind;
+  paidInvoices?: Record<string, boolean>;
 };
 export type Purchase = {
   id: string;
@@ -56,6 +57,7 @@ const COL: Record<string, string> = {
   dueDay: "due_day",
   closingDay: "closing_day",
   invoiceMonth: "invoice_month",
+  paidInvoices: "paid_invoices",
   cardId: "card_id",
 };
 const toDb = (o: object) =>
@@ -73,6 +75,7 @@ const fromCard = (r: Row): Card => ({
   invoiceMonth: r.invoice_month ?? undefined,
   last4: r.last4 ?? undefined,
   kind: r.kind === "meal" ? "meal" : "credit",
+  paidInvoices: r.paid_invoices && typeof r.paid_invoices === "object" ? r.paid_invoices : {},
 });
 const fromPurchase = (r: Row): Purchase => ({
   id: r.id,
@@ -259,6 +262,15 @@ export const actions = {
     set({ data: next });
     persist(() => supabase.from(k).delete().eq("id", id));
   },
+  toggleInvoicePaid(cardId: string, month: string) {
+    const card = state.data.cards.find((c) => c.id === cardId);
+    if (!card || card.kind === "meal") return;
+    const key = `${cardId}:${month}`;
+    const nextMap: Record<string, boolean> = { ...(card.paidInvoices ?? {}) };
+    if (nextMap[key]) delete nextMap[key];
+    else nextMap[key] = true;
+    actions.update("cards", cardId, { paidInvoices: nextMap });
+  },
   moveToPaidBill(p: Purchase, month: string) {
     const partAmount = p.recurring ? p.amount : Math.round((p.amount / p.installments) * 100) / 100;
     const todaySP = new Intl.DateTimeFormat("en-CA", {
@@ -323,6 +335,9 @@ export function monthDiff(a: string, b: string) {
 }
 export function isMealCard(d: Data, cardId: string) {
   return d.cards.find((c) => c.id === cardId)?.kind === "meal";
+}
+export function isInvoicePaid(card: Card, month: string) {
+  return card.kind !== "meal" && Boolean(card.paidInvoices?.[`${card.id}:${month}`]);
 }
 /** Parcela/valor de uma compra que cai no mês informado (0 se não houver). */
 export function installmentIn(p: Purchase, month: string) {

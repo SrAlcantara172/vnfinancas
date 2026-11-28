@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
-import { ArrowUpRight, CalendarCheck2, ChevronLeft, ChevronRight, CreditCard, Pencil, Plus, Repeat, Trash2, Utensils } from "lucide-react";
+import { ArrowUpRight, CalendarCheck2, CheckCircle2, ChevronLeft, ChevronRight, CreditCard, Pencil, Plus, Repeat, Trash2, Utensils } from "lucide-react";
 import { Shell, MonthBar, useForm } from "@/components/vn/shell";
 import { Btn, CardBox, Empty, Field, Modal } from "@/components/vn/ui";
-import { actions, addMonths, brl, installmentIn, invoice, mealSpent, monthDiff, monthLabel, usedLimit, useVn, type Card } from "@/lib/vn-store";
+import { actions, addMonths, brl, installmentIn, invoice, isInvoicePaid, mealSpent, monthDiff, monthLabel, usedLimit, useVn, type Card } from "@/lib/vn-store";
 
 export const Route = createFileRoute("/cartoes")({
   head: () => ({ meta: [{ title: "Cartões de crédito — VnFinanças" }, { name: "description", content: "Cartões, faturas e compras parceladas." }, { property: "og:title", content: "Cartões de crédito — VnFinanças" }, { property: "og:description", content: "Cartões, faturas e compras parceladas." }] }),
@@ -82,6 +82,7 @@ function Page() {
           const purchases = data.purchases.filter((p) => p.cardId === c.id && installmentIn(p, month) > 0);
           const activeInvoice = c.invoiceMonth || month;
           const nextInvoice = addMonths(activeInvoice, 1);
+          const paid = isInvoicePaid(c, month);
 
           return (
             <CardBox
@@ -90,7 +91,19 @@ function Page() {
               sub={`Melhor dia ${c.closingDay ?? 1} · Vence dia ${c.dueDay}${c.last4 ? ` · final ${c.last4}` : ""}`}
               icon={<CreditCard className="h-4 w-4" />}
               action={
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => actions.toggleInvoicePaid(c.id, month)}
+                    className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors ${
+                      paid
+                        ? "border-success/40 bg-success/15 text-success hover:bg-success/25"
+                        : "border-border text-muted-foreground hover:bg-accent hover:text-foreground"
+                    }`}
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    {paid ? "Fatura paga" : "Marcar como paga"}
+                  </button>
                   <button
                     type="button"
                     onClick={() => {
@@ -141,7 +154,10 @@ function Page() {
               <div className="mb-2 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full bg-primary" style={{ width: `${Math.min(100, (used / c.limit) * 100)}%` }} /></div>
               <div className="mb-4 grid grid-cols-3 gap-2 text-xs">
                 <div><p className="text-muted-foreground">Disponível</p><p className="font-medium">{brl(c.limit - used, hide)}</p></div>
-                <div><p className="text-muted-foreground">Fatura atual</p><p className="font-medium text-warning">{brl(invoice(data, c.id, month), hide)}</p></div>
+                <div>
+                  <p className="text-muted-foreground">Fatura atual</p>
+                  <p className={`font-medium ${paid ? "text-success" : "text-warning"}`}>{brl(invoice(data, c.id, month), hide)}</p>
+                </div>
                 <div><p className="text-muted-foreground">Próxima</p><p className="font-medium">{brl(invoice(data, c.id, addMonths(month, 1)), hide)}</p></div>
               </div>
               {purchases.length === 0 ? <Empty>Sem lançamentos nesta fatura.</Empty> : <ul className="divide-y divide-border">
