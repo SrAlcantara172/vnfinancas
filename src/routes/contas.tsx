@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Check, Plus, Repeat, Trash2 } from "lucide-react";
 import { Shell, MonthBar, useForm } from "@/components/vn/shell";
 import { Btn, CardBox, Empty } from "@/components/vn/ui";
-import { actions, billEndMonth, billInstallmentNum, brl, isRecurringBill, shortMonthLabel, useVn } from "@/lib/vn-store";
+import { actions, billEndMonth, billInstallmentNum, brl, isBillPaid, isRecurringBill, shortMonthLabel, useVn } from "@/lib/vn-store";
 
 export const Route = createFileRoute("/contas")({
   head: () => ({ meta: [{ title: "Contas do mês — VnFinanças" }, { name: "description", content: "Contas pagas e pendentes do mês." }, { property: "og:title", content: "Contas do mês — VnFinanças" }, { property: "og:description", content: "Contas pagas e pendentes do mês." }] }),
@@ -15,7 +15,7 @@ function Page() {
   const list = data.bills
     .filter((b) => billInstallmentNum(b, month) > 0)
     .sort((a, b) => a.due.slice(8, 10).localeCompare(b.due.slice(8, 10)) || a.desc.localeCompare(b.desc));
-  const pend = list.filter((b) => !b.paid).reduce((s, b) => s + b.amount, 0);
+  const pend = list.filter((b) => !isBillPaid(b, month)).reduce((s, b) => s + b.amount, 0);
 
   return (
     <>
@@ -29,6 +29,7 @@ function Page() {
             const dueDay = b.due.slice(8, 10) || "10";
             const endYm = billEndMonth(b);
             const endLabel = endYm ? shortMonthLabel(endYm) : null;
+            const paid = isBillPaid(b, month);
 
             return (
               <li key={b.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-3">
@@ -52,7 +53,7 @@ function Page() {
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-sm font-medium">{brl(b.amount, hide)}</span>
-                  <button onClick={() => actions.update("bills", b.id, { paid: !b.paid })} className={`rounded-full px-2.5 py-1 text-xs font-medium ${b.paid ? "bg-success/15 text-success" : "bg-warning/15 text-warning"}`}>{b.paid ? <span className="inline-flex items-center gap-1"><Check className="h-3 w-3" />Pago</span> : "Pendente"}</button>
+                  <button onClick={() => actions.toggleBillPaid(b.id, month)} className={`rounded-full px-2.5 py-1 text-xs font-medium ${paid ? "bg-success/15 text-success" : "bg-warning/15 text-warning"}`}>{paid ? <span className="inline-flex items-center gap-1"><Check className="h-3 w-3" />Pago</span> : "Pendente"}</button>
                   <button aria-label="Excluir" onClick={() => actions.remove("bills", b.id)} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></button>
                 </div>
               </li>

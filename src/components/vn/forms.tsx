@@ -32,15 +32,19 @@ export function EntryModal({ kind, onClose }: { kind: FormKind | null; onClose: 
         const category = f.category || "Outros";
         const isSub = category === "Assinaturas";
         const installments = isSub ? 1 : z.coerce.number().int().min(1).max(120).parse(f.installments || 1);
+        const dueDate = f.due || `${month}-10`;
+        const isPaid = f.paid === "on";
+        const dueMonth = dueDate.slice(0, 7) || month;
         actions.add("bills", {
           id: uid(),
           desc: text.parse(f.desc),
           amount: toBrl(money.parse(f.amount)),
           category,
-          due: f.due || `${month}-10`,
-          paid: f.paid === "on",
+          due: dueDate,
+          paid: isPaid,
           installments,
           recurring: isSub,
+          paidMonths: isPaid ? { [dueMonth]: true } : {},
         });
       }
       if (kind === "transfer") actions.add("transfers", { id: uid(), person: text.parse(f.person), amount: toBrl(money.parse(f.amount)), date: f.date || todayIso, done: false });
@@ -81,7 +85,6 @@ export function EntryModal({ kind, onClose }: { kind: FormKind | null; onClose: 
       setErr(x instanceof z.ZodError ? x.issues[0]?.message ?? "Dados inválidos" : (x as Error).message);
     }
   }
-  const cat = <Field label="Categoria"><select name="category" className="vn-input">{CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select></Field>;
 
   return (
     <Modal open onClose={onClose} title={titles[kind]}>
@@ -152,7 +155,7 @@ export function EntryModal({ kind, onClose }: { kind: FormKind | null; onClose: 
                 <Field label={recurring ? `Valor mensal (${sym})` : `Valor total (${sym})`}><input name="amount" type="number" step="0.01" className="vn-input" /></Field>
                 {!recurring && <Field label="Parcelas"><input name="installments" type="number" min={1} max={48} defaultValue={1} className="vn-input" /></Field>}
               </div>
-              {cat}
+              <Field label="Categoria"><select name="category" className="vn-input">{CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select></Field>
               <Field label="Fatura de cobrança"><input key={defaultPurchaseMonth} name="month" type="month" defaultValue={defaultPurchaseMonth} className="vn-input" /></Field>
             </>
           )}

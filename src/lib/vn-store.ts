@@ -12,6 +12,7 @@ export type Bill = {
   paid: boolean;
   installments?: number;
   recurring?: boolean;
+  paidMonths?: Record<string, boolean>;
 };
 export type Transfer = { id: string; person: string; amount: number; date: string; done: boolean };
 export type CardKind = "credit" | "meal";
@@ -67,6 +68,7 @@ const COL: Record<string, string> = {
   closingDay: "closing_day",
   invoiceMonth: "invoice_month",
   paidInvoices: "paid_invoices",
+  paidMonths: "paid_months",
   cardId: "card_id",
 };
 const toDb = (o: object) =>
@@ -82,6 +84,7 @@ const fromBill = (r: Row): Bill => ({
   paid: r.paid,
   installments: r.installments ? Number(r.installments) : 1,
   recurring: Boolean(r.recurring) || r.category === "Assinaturas",
+  paidMonths: r.paid_months && typeof r.paid_months === "object" ? r.paid_months : {},
 });
 const fromTransfer = (r: Row): Transfer => ({ id: r.id, person: r.person, amount: Number(r.amount), date: r.date, done: r.done });
 const fromCard = (r: Row): Card => ({
@@ -280,6 +283,15 @@ export const actions = {
     set({ data: next });
     persist(() => supabase.from(k).delete().eq("id", id));
   },
+  toggleBillPaid(billId: string, month: string) {
+    const bill = state.data.bills.find((b) => b.id === billId);
+    if (!bill) return;
+    const nextPaid = !isBillPaid(bill, month);
+    const nextMap: Record<string, boolean> = { ...(bill.paidMonths ?? {}) };
+    if (nextPaid) nextMap[month] = true;
+    else delete nextMap[month];
+    actions.update("bills", billId, { paidMonths: nextMap, paid: nextPaid });
+  },
   toggleInvoicePaid(cardId: string, month: string) {
     const card = state.data.cards.find((c) => c.id === cardId);
     if (!card || card.kind === "meal") return;
@@ -307,6 +319,7 @@ export const actions = {
       paid: true,
       installments: 1,
       recurring: false,
+      paidMonths: { [month]: true },
     };
 
     if (p.recurring) {
@@ -355,6 +368,15 @@ export function monthDiff(a: string, b: string) {
 }
 export function isRecurringBill(b: Bill): boolean {
   return Boolean(b.recurring) || b.category === "Assinaturas";
+}
+export function isBillPaid(b: Bill, month: string): boolean {
+  if (b.paidMonths && Object.prototype.hasOwnProperty.call(b.paidMonths, month)) {
+    return Boolean(b.paidMonths[month]);
+  }
+  if (b.paidMonths && Object.keys(b.paidMonths).length > 0) {
+    return false;
+  }
+  return Boolean(b.paid) && b.due.startsWith(month);
 }
 export function billInstallmentNum(b: Bill, month: string): number {
   const startMonth = b.due.slice(0, 7);
@@ -414,7 +436,7 @@ export function summary(d: Data, month: string) {
   const income = d.incomes.filter((i) => i.month === month).reduce((s, i) => s + i.amount, 0);
   const bills = d.bills.filter((b) => billInstallmentNum(b, month) > 0);
   const billsTotal = bills.reduce((s, b) => s + b.amount, 0);
-  const billsPending = bills.filter((b) => !b.paid).reduce((s, b) => s + b.amount, 0);
+  const billsPending = bills.filter((b) => !isBillPaid(b, month)).reduce((s, b) => s + b.amount, 0);
   const cards = invoice(d, null, month);
   const transfers = d.transfers.filter((t) => t.date.startsWith(month));
   const transfersTotal = transfers.reduce((s, t) => s + t.amount, 0);
