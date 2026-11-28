@@ -11,6 +11,7 @@ export type Bill = {
   due: string;
   paid: boolean;
   installments?: number;
+  recurring?: boolean;
 };
 export type Transfer = { id: string; person: string; amount: number; date: string; done: boolean };
 export type CardKind = "credit" | "meal";
@@ -80,6 +81,7 @@ const fromBill = (r: Row): Bill => ({
   due: r.due,
   paid: r.paid,
   installments: r.installments ? Number(r.installments) : 1,
+  recurring: Boolean(r.recurring) || r.category === "Assinaturas",
 });
 const fromTransfer = (r: Row): Transfer => ({ id: r.id, person: r.person, amount: Number(r.amount), date: r.date, done: r.done });
 const fromCard = (r: Row): Card => ({
@@ -304,6 +306,7 @@ export const actions = {
       due: todaySP,
       paid: true,
       installments: 1,
+      recurring: false,
     };
 
     if (p.recurring) {
@@ -350,14 +353,20 @@ export function monthDiff(a: string, b: string) {
   const [yb, mb] = b.split("-").map(Number);
   return (yb! - ya!) * 12 + (mb! - ma!);
 }
+export function isRecurringBill(b: Bill): boolean {
+  return Boolean(b.recurring) || b.category === "Assinaturas";
+}
 export function billInstallmentNum(b: Bill, month: string): number {
-  const count = b.installments && b.installments > 1 ? b.installments : 1;
   const startMonth = b.due.slice(0, 7);
   const diff = monthDiff(startMonth, month);
-  if (diff < 0 || diff >= count) return 0;
+  if (diff < 0) return 0;
+  if (isRecurringBill(b)) return diff + 1;
+  const count = b.installments && b.installments > 1 ? b.installments : 1;
+  if (diff >= count) return 0;
   return diff + 1;
 }
-export function billEndMonth(b: Bill): string {
+export function billEndMonth(b: Bill): string | null {
+  if (isRecurringBill(b)) return null;
   const count = b.installments && b.installments > 1 ? b.installments : 1;
   const startMonth = b.due.slice(0, 7);
   return addMonths(startMonth, count - 1);

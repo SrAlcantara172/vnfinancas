@@ -4,7 +4,7 @@ import { actions, uid, toBrl, CATEGORIES, useVn, type CardKind } from "@/lib/vn-
 import { Btn, Field, Modal } from "./ui";
 
 export type FormKind = "income" | "bill" | "transfer" | "card" | "purchase";
-const titles: Record<FormKind, string> = { income: "Nova renda", bill: "Nova conta ou empréstimo", transfer: "Nova transferência", card: "Novo cartão", purchase: "Nova compra no cartão" };
+const titles: Record<FormKind, string> = { income: "Nova renda", bill: "Nova conta ou assinatura", transfer: "Nova transferência", card: "Novo cartão", purchase: "Nova compra no cartão" };
 const money = z.coerce.number().positive("Informe um valor maior que zero").max(1e9);
 const text = z.string().trim().min(1, "Campo obrigatório").max(100);
 
@@ -14,12 +14,14 @@ export function EntryModal({ kind, onClose }: { kind: FormKind | null; onClose: 
   const [selectedCardId, setSelectedCardId] = useState<string>("");
   const [cardKind, setCardKind] = useState<CardKind>("credit");
   const [recurring, setRecurring] = useState(false);
+  const [billCategory, setBillCategory] = useState<string>(CATEGORIES[0] ?? "Moradia");
   if (!kind) return null;
   const sym = currency === "EUR" ? "€" : "R$";
   const todayIso = new Date().toISOString().slice(0, 10);
   const activeCard = data.cards.find((c) => c.id === (selectedCardId || data.cards[0]?.id));
   const isMealSelected = activeCard?.kind === "meal";
   const defaultPurchaseMonth = isMealSelected ? month : (activeCard?.invoiceMonth || month);
+  const isBillSubscription = billCategory === "Assinaturas";
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -27,15 +29,18 @@ export function EntryModal({ kind, onClose }: { kind: FormKind | null; onClose: 
     try {
       if (kind === "income") actions.add("incomes", { id: uid(), desc: text.parse(f.desc), amount: toBrl(money.parse(f.amount)), month: f.month || month });
       if (kind === "bill") {
-        const installments = z.coerce.number().int().min(1).max(120).parse(f.installments || 1);
+        const category = f.category || "Outros";
+        const isSub = category === "Assinaturas";
+        const installments = isSub ? 1 : z.coerce.number().int().min(1).max(120).parse(f.installments || 1);
         actions.add("bills", {
           id: uid(),
           desc: text.parse(f.desc),
           amount: toBrl(money.parse(f.amount)),
-          category: f.category || "Outros",
+          category,
           due: f.due || `${month}-10`,
           paid: f.paid === "on",
           installments,
+          recurring: isSub,
         });
       }
       if (kind === "transfer") actions.add("transfers", { id: uid(), person: text.parse(f.person), amount: toBrl(money.parse(f.amount)), date: f.date || todayIso, done: false });
@@ -71,7 +76,7 @@ export function EntryModal({ kind, onClose }: { kind: FormKind | null; onClose: 
           recurring: isRec,
         });
       }
-      setErr(""); setRecurring(false); setCardKind("credit"); setSelectedCardId(""); onClose();
+      setErr(""); setRecurring(false); setCardKind("credit"); setSelectedCardId(""); setBillCategory(CATEGORIES[0] ?? "Moradia"); onClose();
     } catch (x) {
       setErr(x instanceof z.ZodError ? x.issues[0]?.message ?? "Dados inválidos" : (x as Error).message);
     }
@@ -87,13 +92,22 @@ export function EntryModal({ kind, onClose }: { kind: FormKind | null; onClose: 
           <Field label="Mês"><input name="month" type="month" defaultValue={month} className="vn-input" /></Field>
         </>}
         {kind === "bill" && <>
-          <Field label="O que é / Descrição"><input name="desc" className="vn-input" placeholder="Empréstimo pessoal" /></Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label={`Valor da parcela (${sym})`}><input name="amount" type="number" step="0.01" className="vn-input" placeholder="176.94" /></Field>
-            <Field label="Parcelas (1 = à vista)"><input name="installments" type="number" min={1} max={120} defaultValue={1} className="vn-input" /></Field>
-          </div>
-          {cat}
-          <Field label="Data da 1ª fatura / vencimento"><input name="due" type="date" defaultValue={`${month}-10`} className="vn-input" /></Field>
+          <Field label="Categoria">
+            <select name="category" value={billCategory} onChange={(e) => setBillCategory(e.target.value)} className="vn-input">
+              {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+            </select>
+          </Field>
+          <Field label="O que é / Descrição"><input name="desc" className="vn-input" placeholder={isBillSubscription ? "Netflix / Internet" : "Empréstimo pessoal"} /></Field>
+          {isBillSubscription ? (
+            <Field label={`Valor mensal (${sym})`}><input name="amount" type="number" step="0.01" className="vn-input" /></Field>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label={`Valor da parcela (${sym})`}><input name="amount" type="number" step="0.01" className="vn-input" placeholder="176.94" /></Field>
+              <Field label="Parcelas (1 = à vista)"><input name="installments" type="number" min={1} max={120} defaultValue={1} className="vn-input" /></Field>
+            </div>
+          )}
+          <Field label={isBillSubscription ? "Início / dia de cobrança" : "Data da 1ª fatura / vencimento"}><input name="due" type="date" defaultValue={`${month}-10`} className="vn-input" /></Field>
+          {isBillSubscription && <p className="mb-3 text-xs text-muted-foreground">Assinaturas ficam ativas todos os meses até você excluir.</p>}
           <label className="mb-3 flex items-center gap-2 text-sm"><input name="paid" type="checkbox" className="accent-[var(--success)]" /> Já está paga</label>
         </>}
         {kind === "transfer" && <>
