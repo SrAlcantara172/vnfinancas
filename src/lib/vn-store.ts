@@ -3,7 +3,15 @@ import type { RealtimeChannel, Session } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
 
 export type Income = { id: string; desc: string; amount: number; month: string };
-export type Bill = { id: string; desc: string; amount: number; category: string; due: string; paid: boolean };
+export type Bill = {
+  id: string;
+  desc: string;
+  amount: number;
+  category: string;
+  due: string;
+  paid: boolean;
+  installments?: number;
+};
 export type Transfer = { id: string; person: string; amount: number; date: string; done: boolean };
 export type CardKind = "credit" | "meal";
 export type Card = {
@@ -64,7 +72,15 @@ const toDb = (o: object) =>
   Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined).map(([k, v]) => [COL[k] ?? k, v]));
 
 const fromIncome = (r: Row): Income => ({ id: r.id, desc: r.description, amount: Number(r.amount), month: r.month });
-const fromBill = (r: Row): Bill => ({ id: r.id, desc: r.description, amount: Number(r.amount), category: r.category, due: r.due, paid: r.paid });
+const fromBill = (r: Row): Bill => ({
+  id: r.id,
+  desc: r.description,
+  amount: Number(r.amount),
+  category: r.category,
+  due: r.due,
+  paid: r.paid,
+  installments: r.installments ? Number(r.installments) : 1,
+});
 const fromTransfer = (r: Row): Transfer => ({ id: r.id, person: r.person, amount: Number(r.amount), date: r.date, done: r.done });
 const fromCard = (r: Row): Card => ({
   id: r.id,
@@ -287,6 +303,7 @@ export const actions = {
       category: p.category || "Outros",
       due: todaySP,
       paid: true,
+      installments: 1,
     };
 
     if (p.recurring) {
@@ -333,6 +350,23 @@ export function monthDiff(a: string, b: string) {
   const [yb, mb] = b.split("-").map(Number);
   return (yb! - ya!) * 12 + (mb! - ma!);
 }
+export function billInstallmentNum(b: Bill, month: string): number {
+  const count = b.installments && b.installments > 1 ? b.installments : 1;
+  const startMonth = b.due.slice(0, 7);
+  const diff = monthDiff(startMonth, month);
+  if (diff < 0 || diff >= count) return 0;
+  return diff + 1;
+}
+export function billEndMonth(b: Bill): string {
+  const count = b.installments && b.installments > 1 ? b.installments : 1;
+  const startMonth = b.due.slice(0, 7);
+  return addMonths(startMonth, count - 1);
+}
+export function shortMonthLabel(ymStr: string): string {
+  const [y, mo] = ymStr.split("-").map(Number);
+  const label = new Date(y!, mo! - 1, 1).toLocaleDateString("pt-BR", { month: "short" }).replace(".", "");
+  return `${label.slice(0, 3)}./${y}`;
+}
 export function isMealCard(d: Data, cardId: string) {
   return d.cards.find((c) => c.id === cardId)?.kind === "meal";
 }
@@ -369,7 +403,7 @@ export function usedLimit(d: Data, cardId: string, month: string) {
 }
 export function summary(d: Data, month: string) {
   const income = d.incomes.filter((i) => i.month === month).reduce((s, i) => s + i.amount, 0);
-  const bills = d.bills.filter((b) => b.due.startsWith(month));
+  const bills = d.bills.filter((b) => billInstallmentNum(b, month) > 0);
   const billsTotal = bills.reduce((s, b) => s + b.amount, 0);
   const billsPending = bills.filter((b) => !b.paid).reduce((s, b) => s + b.amount, 0);
   const cards = invoice(d, null, month);
@@ -389,4 +423,4 @@ export const monthLabel = (m: string) => {
   const [y, mo] = m.split("-").map(Number);
   return new Date(y!, mo! - 1, 1).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
 };
-export const CATEGORIES = ["Moradia", "Alimentação", "Transporte", "Saúde", "Lazer", "Educação", "Assinaturas", "Outros"];
+export const CATEGORIES = ["Moradia", "Alimentação", "Transporte", "Saúde", "Lazer", "Educação", "Assinaturas", "Empréstimo", "Outros"];
