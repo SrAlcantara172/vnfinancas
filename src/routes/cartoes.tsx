@@ -3,7 +3,7 @@ import { useState, type FormEvent } from "react";
 import { ArrowUpRight, CalendarCheck2, CheckCircle2, ChevronLeft, ChevronRight, CreditCard, Pencil, Plus, Repeat, Trash2, Utensils } from "lucide-react";
 import { Shell, MonthBar, useForm } from "@/components/vn/shell";
 import { Btn, CardBox, Empty, Field, Modal } from "@/components/vn/ui";
-import { actions, addMonths, brl, CATEGORIES, installmentIn, invoice, isInvoicePaid, mealAvailableInMonth, monthDiff, monthLabel, toBrl, usedLimit, useVn, type Card, type Purchase } from "@/lib/vn-store";
+import { actions, addMonths, brl, CATEGORIES, installmentIn, invoice, isInvoicePaid, isPurchasePaid, mealAvailableInMonth, monthDiff, monthLabel, toBrl, usedLimit, useVn, type Card, type Purchase } from "@/lib/vn-store";
 
 export const Route = createFileRoute("/cartoes")({
   head: () => ({ meta: [{ title: "Cartões de crédito — VnFinanças" }, { name: "description", content: "Cartões, faturas e compras parceladas." }, { property: "og:title", content: "Cartões de crédito — VnFinanças" }, { property: "og:description", content: "Cartões, faturas e compras parceladas." }] }),
@@ -128,7 +128,7 @@ function Page() {
           const purchases = data.purchases.filter((p) => p.cardId === c.id && installmentIn(p, month) > 0);
           const activeInvoice = c.invoiceMonth || month;
           const nextInvoice = addMonths(activeInvoice, 1);
-          const paid = isInvoicePaid(c, month);
+          const paid = isInvoicePaid(c, month, data);
 
           return (
             <CardBox
@@ -148,7 +148,7 @@ function Page() {
                     }`}
                   >
                     <CheckCircle2 className="h-3.5 w-3.5" />
-                    {paid ? "Fatura paga" : "Marcar como paga"}
+                    {paid ? "Fatura paga" : "Marcar como pago"}
                   </button>
                   <button
                     type="button"
@@ -207,42 +207,54 @@ function Page() {
                 <div><p className="text-muted-foreground">Próxima</p><p className="font-medium">{brl(invoice(data, c.id, addMonths(month, 1)), hide)}</p></div>
               </div>
               {purchases.length === 0 ? <Empty>Sem lançamentos nesta fatura.</Empty> : <ul className="divide-y divide-border">
-                {purchases.map((p) => (
-                  <li key={p.id} className="flex items-center justify-between gap-3 py-2 text-sm">
-                    <span className="flex min-w-0 items-center gap-1.5 truncate">
-                      <span className="truncate">{p.desc}</span>
-                      {p.recurring ? (
-                        <span className="inline-flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                          <Repeat className="h-2.5 w-2.5" />mensal
-                        </span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">{monthDiff(p.month, month) + 1}/{p.installments}</span>
-                      )}
-                    </span>
-                    <span className="flex shrink-0 items-center gap-1.5">
-                      <span className="mr-0.5">{brl(installmentIn(p, month), hide)}</span>
-                      <button
-                        type="button"
-                        aria-label="Editar lançamento"
-                        title="Editar lançamento da fatura"
-                        onClick={() => openPurchaseEdit(p)}
-                        className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Mover para conta paga"
-                        title="Mover para Contas do mês como pago"
-                        onClick={() => actions.moveToPaidBill(p, month)}
-                        className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-success"
-                      >
-                        <ArrowUpRight className="h-4 w-4" />
-                      </button>
-                      <button aria-label="Excluir" onClick={() => actions.remove("purchases", p.id)} className="rounded p-1 text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></button>
-                    </span>
-                  </li>
-                ))}
+                {purchases.map((p) => {
+                  const itemPaid = isPurchasePaid(p, month);
+                  return (
+                    <li key={p.id} className="flex items-center justify-between gap-3 py-2 text-sm">
+                      <span className="flex min-w-0 items-center gap-1.5 truncate">
+                        <span className={`truncate ${itemPaid ? "text-muted-foreground line-through" : ""}`}>{p.desc}</span>
+                        {p.recurring ? (
+                          <span className="inline-flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                            <Repeat className="h-2.5 w-2.5" />mensal
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">{monthDiff(p.month, month) + 1}/{p.installments}</span>
+                        )}
+                      </span>
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        <span className={`mr-0.5 ${itemPaid ? "text-success" : ""}`}>{brl(installmentIn(p, month), hide)}</span>
+                        <button
+                          type="button"
+                          aria-label={itemPaid ? "Marcar lançamento como pendente" : "Marcar lançamento como pago"}
+                          title={itemPaid ? "Pago neste mês (clique para desmarcar)" : "Marcar este lançamento como pago"}
+                          onClick={() => actions.togglePurchasePaid(p.id, month)}
+                          className={`rounded p-1 transition-colors ${itemPaid ? "text-success hover:bg-accent" : "text-muted-foreground hover:bg-accent hover:text-success"}`}
+                        >
+                          <CheckCircle2 className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Editar lançamento"
+                          title="Editar lançamento da fatura"
+                          onClick={() => openPurchaseEdit(p)}
+                          className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Mover para conta paga"
+                          title="Mover para Contas do mês como pago"
+                          onClick={() => actions.moveToPaidBill(p, month)}
+                          className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-success"
+                        >
+                          <ArrowUpRight className="h-4 w-4" />
+                        </button>
+                        <button aria-label="Excluir" onClick={() => actions.remove("purchases", p.id)} className="rounded p-1 text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></button>
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>}
             </CardBox>
           );

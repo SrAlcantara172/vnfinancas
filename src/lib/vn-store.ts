@@ -42,6 +42,7 @@ export type Purchase = {
   month: string;
   category: string;
   recurring?: boolean;
+  paidMonths?: Record<string, boolean>;
 };
 export type Data = { incomes: Income[]; bills: Bill[]; transfers: Transfer[]; cards: Card[]; purchases: Purchase[] };
 type User = { id: string; email: string; name: string };
@@ -119,6 +120,7 @@ const fromPurchase = (r: Row): Purchase => ({
   month: r.month,
   category: r.category,
   recurring: Boolean(r.recurring),
+  paidMonths: r.paid_months && typeof r.paid_months === "object" ? r.paid_months : {},
 });
 
 async function loadData() {
@@ -304,14 +306,52 @@ export const actions = {
     else delete nextMap[month];
     actions.update("bills", billId, { paidMonths: nextMap, paid: nextPaid });
   },
+  togglePurchasePaid(purchaseId: string, month: string) {
+    const purchase = state.data.purchases.find((p) => p.id === purchaseId);
+    if (!purchase) return;
+    const nextPaid = !isPurchasePaid(purchase, month);
+    const nextMap: Record<string, boolean> = { ...(purchase.paidMonths ?? {}) };
+    if (nextPaid) nextMap[month] = true;
+    else delete nextMap[month];
+    actions.update("purchases", purchaseId, { paidMonths: nextMap });
+  },
   toggleInvoicePaid(cardId: string, month: string) {
     const card = state.data.cards.find((c) => c.id === cardId);
     if (!card || card.kind === "meal") return;
     const key = `${cardId}:${month}`;
     const nextMap: Record<string, boolean> = { ...(card.paidInvoices ?? {}) };
-    if (nextMap[key]) delete nextMap[key];
-    else nextMap[key] = true;
-    actions.update("cards", cardId, { paidInvoices: nextMap });
+    const markAllPaid = !nextMap[key];
+    if (markAllPaid) nextMap[key] = true;
+    else delete nextMap[key];
+
+    const updatedPurchases = state.data.purchases.map((p) => {
+      if (p.cardId !== cardId || installmentIn(p, month) <= 0) return p;
+      const pMap: Record<string, boolean> = { ...(p.paidMonths ?? {}) };
+      if (markAllPaid) pMap[month] = true;
+      else delete pMap[month];
+      return { ...p, paidMonths: pMap };
+    });
+
+    set({
+      data: {
+        ...state.data,
+        cards: state.data.cards.map((c) => (c.id === cardId ? { ...c, paidInvoices: nextMap } : c)),
+        purchases: updatedPurchases,
+      },
+    });
+
+    const run = async () => {
+      const cardRes = await supabase.from("cards").update(toDb({ paidInvoices: nextMap })).eq("id", cardId);
+      if (cardRes.error) return { error: cardRes.error };
+      const targets = updatedPurchases.filter((p) => p.cardId === cardId && installmentIn(p, month) > 0);
+      for (const p of targets) {
+        const pRes = await supabase.from("purchases").update(toDb({ paidMonths: p.paidMonths ?? {} })).eq("id", p.id);
+        if (pRes.error) return { error: pRes.error };
+      }
+      return { error: null };
+    };
+
+    persist(run);
   },
   moveToPaidBill(p: Purchase, month: string) {
     const partAmount = p.recurring ? p.amount : Math.round((p.amount / p.installments) * 100) / 100;
@@ -397,6 +437,9 @@ export function isBillPaid(b: Bill, month: string): boolean {
   }
   return Boolean(b.paid) && b.due.startsWith(month);
 }
+export function isPurchasePaid(p: Purchase, month: string): boolean {
+  return Boolean(p.paidMonths?.[month]);
+}
 export function billInstallmentNum(b: Bill, month: string): number {
   const startMonth = b.due.slice(0, 7);
   const diff = monthDiff(startMonth, month);
@@ -420,8 +463,20 @@ export function shortMonthLabel(ymStr: string): string {
 export function isMealCard(d: Data, cardId: string) {
   return d.cards.find((c) => c.id === cardId)?.kind === "meal";
 }
-export function isInvoicePaid(card: Card, month: string) {
-  return card.kind !== "meal" && Boolean(card.paidInvoices?.[`${card.id}:${month}`]);
+export function isInvoicePaid(card: Card, month: string, d?: Data): boolean {
+  if (card.kind === "meal") return false;
+  if (card.paidInvoices?.[`${card.id}:${month}`]) return true;
+  if (!d) return false;
+  const items = d.purchases.filter((p) => p.cardId === card.id && installmentIn(p, month) > 0);
+  return items.length > 0 && items.every((p) => isPurchasePaid(p, month));
+}
+export function invoicePending(d: Data, cardId: string, month: string): number {
+  const card = d.cards.find((c) => c.id === cardId);
+  if (!card || card.kind === "meal") return 0;
+  if (card.paidInvoices?.[`${card.id}:${month}`]) return 0;
+  return d.purchases
+    .filter((p) => p.cardId === cardId && !isPurchasePaid(p, month))
+    .reduce((s, p) => s + installmentIn(p, month), 0);
 }
 /** Parcela/valor de uma compra que cai no mês informado (0 se não houver). */
 export function installmentIn(p: Purchase, month: string) {
@@ -484,11 +539,15 @@ export function summary(d: Data, month: string) {
   const billsTotal = bills.reduce((s, b) => s + b.amount, 0);
   const billsPending = bills.filter((b) => !isBillPaid(b, month)).reduce((s, b) => s + b.amount, 0);
   const cards = invoice(d, null, month);
+  const cardsPending = d.cards
+    .filter((c) => c.kind !== "meal")
+    .reduce((s, c) => s + invoicePending(d, c.id, month), 0);
+  const pendingTotal = billsPending + cardsPending;
   const transfers = d.transfers.filter((t) => t.date.startsWith(month));
   const transfersTotal = transfers.reduce((s, t) => s + t.amount, 0);
   const transfersPending = transfers.filter((t) => !t.done).reduce((s, t) => s + t.amount, 0);
   const expenses = billsTotal + cards;
-  return { income, billsTotal, billsPending, cards, expenses, transfersTotal, transfersPending, transfersCount: transfers.length, free: income - expenses - transfersTotal };
+  return { income, billsTotal, billsPending, cards, cardsPending, pendingTotal, expenses, transfersTotal, transfersPending, transfersCount: transfers.length, free: income - expenses - transfersTotal };
 }
 export const brl = (v: number, hide = false) => {
   const eur = state.currency === "EUR";
