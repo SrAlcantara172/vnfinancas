@@ -4,7 +4,7 @@ import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis
 import type { ReactNode } from "react";
 import { Shell, MonthBar } from "@/components/vn/shell";
 import { CardBox, Empty } from "@/components/vn/ui";
-import { actions, addMonths, billInstallmentNum, brl, installmentIn, invoice, invoicePending, isBillPaid, isInvoicePaid, isMealCard, mealAvailableInMonth, monthDiff, monthLabel, summary, usedLimit, useVn } from "@/lib/vn-store";
+import { actions, addMonths, billInstallmentNum, brl, installmentIn, invoicePending, isBillPaid, isInvoicePaid, isMealCard, mealAvailableInMonth, monthDiff, monthLabel, summary, usedLimit, useVn } from "@/lib/vn-store";
 
 export const Route = createFileRoute("/")({
   head: () => ({ meta: [
@@ -124,19 +124,31 @@ function Overview() {
   const byMonth: Record<string, number> = {};
   future.forEach((x) => (byMonth[x.m] = (byMonth[x.m] ?? 0) + x.v));
 
-  // vencimentos próximos 7 dias
+  // vencimentos nos próximos 7 dias (apenas do mês selecionado e ainda não pagos)
   const now = new Date(); now.setHours(0, 0, 0, 0);
   const lim = new Date(now); lim.setDate(lim.getDate() + 7);
   const inRange = (d: Date) => d >= now && d <= lim;
-  const dues = [
-    ...data.bills.filter((b) => !isBillPaid(b, month) && inRange(new Date(b.due + "T00:00"))).map((b) => ({ id: b.id, name: b.desc, date: new Date(b.due + "T00:00"), v: b.amount })),
-    ...data.cards.filter((c) => c.kind !== "meal").flatMap((c) => [0, 1].map((k) => { const d = new Date(now.getFullYear(), now.getMonth() + k, c.dueDay); const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; return { id: c.id + k, name: `Fatura ${c.name}`, date: d, v: isInvoicePaid(c, m, data) ? 0 : invoice(data, c.id, m) }; })).filter((x) => inRange(x.date) && x.v > 0),
-  ].sort((a, b) => +a.date - +b.date);
-
   const [selYear, selMonth] = month.split("-").map(Number);
-  const hasOverdueBill = data.bills.some((b) => billInstallmentNum(b, month) > 0 && !isBillPaid(b, month) && new Date(b.due + "T00:00") < now);
+
+  const billDues = data.bills
+    .filter((b) => billInstallmentNum(b, month) > 0 && b.due.startsWith(month) && !isBillPaid(b, month))
+    .map((b) => ({ id: b.id, name: b.desc, date: new Date(b.due + "T00:00"), v: b.amount }))
+    .filter((x) => inRange(x.date));
+
+  const cardDues = data.cards
+    .filter((c) => c.kind !== "meal" && !isInvoicePaid(c, month, data))
+    .map((c) => {
+      const maxDay = new Date(selYear!, selMonth!, 0).getDate();
+      const dueDate = new Date(selYear!, selMonth! - 1, Math.min(c.dueDay, maxDay));
+      return { id: c.id, name: `Fatura ${c.name}`, date: dueDate, v: invoicePending(data, c.id, month) };
+    })
+    .filter((x) => inRange(x.date) && x.v > 0);
+
+  const dues = [...billDues, ...cardDues].sort((a, b) => +a.date - +b.date);
+
+  const hasOverdueBill = data.bills.some((b) => billInstallmentNum(b, month) > 0 && b.due.startsWith(month) && !isBillPaid(b, month) && new Date(b.due + "T00:00") < now);
   const hasOverdueCard = data.cards.some((c) => {
-    if (c.kind === "meal" || invoicePending(data, c.id, month) <= 0) return false;
+    if (c.kind === "meal" || isInvoicePaid(c, month, data) || invoicePending(data, c.id, month) <= 0) return false;
     const maxDay = new Date(selYear!, selMonth!, 0).getDate();
     const dueDate = new Date(selYear!, selMonth! - 1, Math.min(c.dueDay, maxDay));
     return dueDate < now;
@@ -235,8 +247,8 @@ function Overview() {
                   </div>
                   <div className="grid grid-cols-3 gap-2 text-xs">
                     <div><p className="text-muted-foreground">Limite livre</p><p>{brl(c.limit - usedLimit(data, c.id, month), hide)}</p></div>
-                    <div><p className="text-muted-foreground">Fatura atual</p><p className={paid ? "text-success" : "text-warning"}>{brl(invoice(data, c.id, month), hide)}</p></div>
-                    <div><p className="text-muted-foreground">Próxima fatura</p><p>{brl(invoice(data, c.id, addMonths(month, 1)), hide)}</p></div>
+                    <div><p className="text-muted-foreground">Fatura atual</p><p className={paid ? "text-success" : "text-warning"}>{brl(invoicePending(data, c.id, month), hide)}</p></div>
+                    <div><p className="text-muted-foreground">Próxima fatura</p><p>{brl(invoicePending(data, c.id, addMonths(month, 1)), hide)}</p></div>
                   </div>
                 </div>
               );
