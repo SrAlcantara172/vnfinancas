@@ -3,7 +3,7 @@ import { useState, type FormEvent } from "react";
 import { ArrowUpRight, CalendarCheck2, CheckCircle2, ChevronLeft, ChevronRight, CreditCard, Pencil, Plus, Repeat, Trash2, Utensils } from "lucide-react";
 import { Shell, MonthBar, useForm } from "@/components/vn/shell";
 import { Btn, CardBox, Empty, Field, Modal } from "@/components/vn/ui";
-import { actions, addMonths, brl, installmentIn, invoice, isInvoicePaid, mealSpent, monthDiff, monthLabel, usedLimit, useVn, type Card } from "@/lib/vn-store";
+import { actions, addMonths, brl, CATEGORIES, installmentIn, invoice, isInvoicePaid, mealSpent, monthDiff, monthLabel, toBrl, usedLimit, useVn, type Card, type Purchase } from "@/lib/vn-store";
 
 export const Route = createFileRoute("/cartoes")({
   head: () => ({ meta: [{ title: "Cartões de crédito — VnFinanças" }, { name: "description", content: "Cartões, faturas e compras parceladas." }, { property: "og:title", content: "Cartões de crédito — VnFinanças" }, { property: "og:description", content: "Cartões, faturas e compras parceladas." }] }),
@@ -11,9 +11,12 @@ export const Route = createFileRoute("/cartoes")({
 });
 
 function Page() {
-  const { data, month, hide } = useVn();
+  const { data, month, hide, currency } = useVn();
   const f = useForm();
   const [editing, setEditing] = useState<Card | null>(null);
+  const [editingPurchase, setEditingPurchase] = useState<Purchase | null>(null);
+  const [editPurchaseRec, setEditPurchaseRec] = useState(false);
+  const sym = currency === "EUR" ? "€" : "R$";
 
   function saveEdit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -26,6 +29,37 @@ function Page() {
 
     actions.update("cards", editing.id, { closingDay, dueDay, invoiceMonth });
     setEditing(null);
+  }
+
+  function openPurchaseEdit(p: Purchase) {
+    setEditingPurchase(p);
+    setEditPurchaseRec(Boolean(p.recurring));
+  }
+
+  function savePurchaseEdit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!editingPurchase) return;
+    const fd = new FormData(e.currentTarget);
+    const desc = String(fd.get("desc") || "").trim();
+    const rawAmount = Number(fd.get("amount"));
+    if (!desc || !Number.isFinite(rawAmount) || rawAmount <= 0) return;
+
+    const isMeal = data.cards.find((c) => c.id === editingPurchase.cardId)?.kind === "meal";
+    const recurring = !isMeal && editPurchaseRec;
+    const installments = recurring ? 1 : Math.min(48, Math.max(1, Number(fd.get("installments")) || 1));
+    const rawMonth = String(fd.get("month") || "").trim();
+    const targetMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(rawMonth) ? rawMonth : editingPurchase.month;
+    const category = isMeal ? "Alimentação" : (String(fd.get("category") || "").trim() || editingPurchase.category || "Outros");
+
+    actions.update("purchases", editingPurchase.id, {
+      desc,
+      amount: toBrl(rawAmount),
+      installments,
+      month: targetMonth,
+      category,
+      recurring,
+    });
+    setEditingPurchase(null);
   }
 
   return (
@@ -66,6 +100,15 @@ function Page() {
                         <span className="min-w-0 truncate">{p.desc}</span>
                         <span className="flex shrink-0 items-center gap-2">
                           {brl(p.amount, hide)}
+                          <button
+                            type="button"
+                            aria-label="Editar lançamento"
+                            title="Editar lançamento"
+                            onClick={() => openPurchaseEdit(p)}
+                            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
                           <button aria-label="Excluir" onClick={() => actions.remove("purchases", p.id)} className="rounded p-1 text-muted-foreground hover:text-destructive">
                             <Trash2 className="h-4 w-4" />
                           </button>
@@ -173,8 +216,17 @@ function Page() {
                         <span className="text-xs text-muted-foreground">{monthDiff(p.month, month) + 1}/{p.installments}</span>
                       )}
                     </span>
-                    <span className="flex shrink-0 items-center gap-2">
-                      {brl(installmentIn(p, month), hide)}
+                    <span className="flex shrink-0 items-center gap-1.5">
+                      <span className="mr-0.5">{brl(installmentIn(p, month), hide)}</span>
+                      <button
+                        type="button"
+                        aria-label="Editar lançamento"
+                        title="Editar lançamento da fatura"
+                        onClick={() => openPurchaseEdit(p)}
+                        className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
                       <button
                         type="button"
                         aria-label="Mover para conta paga"
@@ -211,6 +263,50 @@ function Page() {
             <Btn type="submit" className="w-full">Salvar alterações</Btn>
           </form>
         )}
+      </Modal>
+
+      <Modal open={!!editingPurchase} onClose={() => setEditingPurchase(null)} title="Editar lançamento">
+        {editingPurchase && (() => {
+          const isMeal = data.cards.find((c) => c.id === editingPurchase.cardId)?.kind === "meal";
+          return (
+            <form onSubmit={savePurchaseEdit}>
+              <Field label="Descrição">
+                <input name="desc" defaultValue={editingPurchase.desc} className="vn-input" />
+              </Field>
+              {isMeal ? (
+                <Field label={`Valor gasto (${sym})`}>
+                  <input name="amount" type="number" step="0.01" defaultValue={editingPurchase.amount} className="vn-input" />
+                </Field>
+              ) : (
+                <>
+                  <label className="mb-3 flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={editPurchaseRec} onChange={(e) => setEditPurchaseRec(e.target.checked)} className="accent-primary" />
+                    Assinatura recorrente (repete todo mês)
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label={editPurchaseRec ? `Valor mensal (${sym})` : `Valor total (${sym})`}>
+                      <input name="amount" type="number" step="0.01" defaultValue={editingPurchase.amount} className="vn-input" />
+                    </Field>
+                    {!editPurchaseRec && (
+                      <Field label="Parcelas">
+                        <input name="installments" type="number" min={1} max={48} defaultValue={editingPurchase.installments} className="vn-input" />
+                      </Field>
+                    )}
+                  </div>
+                  <Field label="Categoria">
+                    <select name="category" defaultValue={editingPurchase.category || "Outros"} className="vn-input">
+                      {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Fatura de início">
+                    <input name="month" type="month" defaultValue={editingPurchase.month} className="vn-input" />
+                  </Field>
+                </>
+              )}
+              <Btn type="submit" className="w-full">Salvar alterações</Btn>
+            </form>
+          );
+        })()}
       </Modal>
 
       {f.modal}

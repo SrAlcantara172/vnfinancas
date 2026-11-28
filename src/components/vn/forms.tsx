@@ -14,6 +14,7 @@ export function EntryModal({ kind, onClose }: { kind: FormKind | null; onClose: 
   const [selectedCardId, setSelectedCardId] = useState<string>("");
   const [cardKind, setCardKind] = useState<CardKind>("credit");
   const [recurring, setRecurring] = useState(false);
+  const [incomeRecurring, setIncomeRecurring] = useState(true);
   const [billCategory, setBillCategory] = useState<string>(CATEGORIES[0] ?? "Moradia");
   if (!kind) return null;
   const sym = currency === "EUR" ? "€" : "R$";
@@ -27,7 +28,16 @@ export function EntryModal({ kind, onClose }: { kind: FormKind | null; onClose: 
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.currentTarget)) as Partial<Record<"desc" | "amount" | "installments" | "month" | "category" | "due" | "paid" | "person" | "date" | "name" | "limit" | "dueDay" | "closingDay" | "invoiceMonth" | "cardId" | "email" | "password" | "last4", string>>;
     try {
-      if (kind === "income") actions.add("incomes", { id: uid(), desc: text.parse(f.desc), amount: toBrl(money.parse(f.amount)), month: f.month || month });
+      if (kind === "income") {
+        const desc = text.parse(f.desc);
+        actions.add("incomes", {
+          id: uid(),
+          desc,
+          amount: toBrl(money.parse(f.amount)),
+          month: f.month || month,
+          recurring: incomeRecurring || /sal[aá]rio/i.test(desc),
+        });
+      }
       if (kind === "bill") {
         const category = f.category || "Outros";
         const isSub = category === "Assinaturas";
@@ -80,7 +90,7 @@ export function EntryModal({ kind, onClose }: { kind: FormKind | null; onClose: 
           recurring: isRec,
         });
       }
-      setErr(""); setRecurring(false); setCardKind("credit"); setSelectedCardId(""); setBillCategory(CATEGORIES[0] ?? "Moradia"); onClose();
+      setErr(""); setRecurring(false); setIncomeRecurring(true); setCardKind("credit"); setSelectedCardId(""); setBillCategory(CATEGORIES[0] ?? "Moradia"); onClose();
     } catch (x) {
       setErr(x instanceof z.ZodError ? x.issues[0]?.message ?? "Dados inválidos" : (x as Error).message);
     }
@@ -92,7 +102,11 @@ export function EntryModal({ kind, onClose }: { kind: FormKind | null; onClose: 
         {kind === "income" && <>
           <Field label="Descrição"><input name="desc" className="vn-input" placeholder="Salário" /></Field>
           <Field label={`Valor (${sym})`}><input name="amount" type="number" step="0.01" className="vn-input" /></Field>
-          <Field label="Mês"><input name="month" type="month" defaultValue={month} className="vn-input" /></Field>
+          <Field label="A partir do mês"><input name="month" type="month" defaultValue={month} className="vn-input" /></Field>
+          <label className="mb-3 flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={incomeRecurring} onChange={(e) => setIncomeRecurring(e.target.checked)} className="accent-primary" />
+            Salário / renda fixa (repete todos os meses até mudar)
+          </label>
         </>}
         {kind === "bill" && <>
           <Field label="Categoria">

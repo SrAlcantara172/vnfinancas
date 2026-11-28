@@ -2,7 +2,13 @@ import { useSyncExternalStore } from "react";
 import type { RealtimeChannel, Session } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
 
-export type Income = { id: string; desc: string; amount: number; month: string };
+export type Income = {
+  id: string;
+  desc: string;
+  amount: number;
+  month: string;
+  recurring?: boolean;
+};
 export type Bill = {
   id: string;
   desc: string;
@@ -74,7 +80,13 @@ const COL: Record<string, string> = {
 const toDb = (o: object) =>
   Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined).map(([k, v]) => [COL[k] ?? k, v]));
 
-const fromIncome = (r: Row): Income => ({ id: r.id, desc: r.description, amount: Number(r.amount), month: r.month });
+const fromIncome = (r: Row): Income => ({
+  id: r.id,
+  desc: r.description,
+  amount: Number(r.amount),
+  month: r.month,
+  recurring: Boolean(r.recurring) || /sal[aá]rio/i.test(String(r.description ?? "")),
+});
 const fromBill = (r: Row): Bill => ({
   id: r.id,
   desc: r.description,
@@ -366,6 +378,13 @@ export function monthDiff(a: string, b: string) {
   const [yb, mb] = b.split("-").map(Number);
   return (yb! - ya!) * 12 + (mb! - ma!);
 }
+export function isRecurringIncome(i: Income): boolean {
+  return Boolean(i.recurring) || /sal[aá]rio/i.test(i.desc);
+}
+export function incomeInMonth(i: Income, month: string): boolean {
+  if (isRecurringIncome(i)) return monthDiff(i.month, month) >= 0;
+  return i.month === month;
+}
 export function isRecurringBill(b: Bill): boolean {
   return Boolean(b.recurring) || b.category === "Assinaturas";
 }
@@ -433,7 +452,7 @@ export function usedLimit(d: Data, cardId: string, month: string) {
   }, 0);
 }
 export function summary(d: Data, month: string) {
-  const income = d.incomes.filter((i) => i.month === month).reduce((s, i) => s + i.amount, 0);
+  const income = d.incomes.filter((i) => incomeInMonth(i, month)).reduce((s, i) => s + i.amount, 0);
   const bills = d.bills.filter((b) => billInstallmentNum(b, month) > 0);
   const billsTotal = bills.reduce((s, b) => s + b.amount, 0);
   const billsPending = bills.filter((b) => !isBillPaid(b, month)).reduce((s, b) => s + b.amount, 0);

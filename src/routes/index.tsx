@@ -4,7 +4,7 @@ import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis
 import type { ReactNode } from "react";
 import { Shell, MonthBar } from "@/components/vn/shell";
 import { CardBox, Empty } from "@/components/vn/ui";
-import { actions, addMonths, brl, installmentIn, invoice, isInvoicePaid, mealSpent, monthDiff, monthLabel, summary, usedLimit, useVn } from "@/lib/vn-store";
+import { actions, addMonths, billInstallmentNum, brl, installmentIn, invoice, isInvoicePaid, isMealCard, mealSpent, monthDiff, monthLabel, summary, usedLimit, useVn } from "@/lib/vn-store";
 
 export const Route = createFileRoute("/")({
   head: () => ({ meta: [
@@ -16,7 +16,7 @@ export const Route = createFileRoute("/")({
   component: () => <Shell title="Visão geral"><Overview /></Shell>,
 });
 
-const COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)", "oklch(0.6 0.15 300)", "oklch(0.7 0.12 200)", "oklch(0.55 0.1 120)"];
+const COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)", "oklch(0.6 0.15 300)", "oklch(0.7 0.12 200)", "oklch(0.55 0.1 120)", "oklch(0.65 0.14 40)"];
 
 function freeMood(free: number, income: number) {
   if (free < 0) {
@@ -59,18 +59,42 @@ function Overview() {
   const h = new Date().getHours();
   const greet = h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite";
 
-  // categorias
+  // gráfico geral por categoria: contas/empréstimos/assinaturas + cartões de crédito + transferências
   const cats: Record<string, number> = {};
-  data.bills.filter((b) => b.due.startsWith(month)).forEach((b) => (cats[b.category] = (cats[b.category] ?? 0) + b.amount));
-  data.purchases.forEach((p) => { const v = installmentIn(p, month); if (v) cats[p.category] = (cats[p.category] ?? 0) + v; });
-  const pie = Object.entries(cats).map(([name, value]) => ({ name, value }));
+  data.bills
+    .filter((b) => billInstallmentNum(b, month) > 0)
+    .forEach((b) => {
+      const cat = b.category || "Outros";
+      cats[cat] = (cats[cat] ?? 0) + b.amount;
+    });
+  data.purchases
+    .filter((p) => !isMealCard(data, p.cardId))
+    .forEach((p) => {
+      const v = installmentIn(p, month);
+      if (v > 0) {
+        const cat = p.category || "Outros";
+        cats[cat] = (cats[cat] ?? 0) + v;
+      }
+    });
+  const transfersTotal = data.transfers
+    .filter((t) => t.date.startsWith(month))
+    .reduce((acc, t) => acc + t.amount, 0);
+  if (transfersTotal > 0) {
+    cats["Transferências"] = (cats["Transferências"] ?? 0) + transfersTotal;
+  }
+  const pie = Object.entries(cats)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value);
+
   const bars = Array.from({ length: 6 }, (_, i) => { const m = addMonths(month, i - 5); const x = summary(data, m); return { name: monthLabel(m).slice(0, 3), Renda: x.income, Despesas: x.expenses + x.transfersTotal }; });
 
   // compromissos futuros
-  const future = data.purchases.flatMap((p) => {
-    if (p.recurring) return [{ p, m: addMonths(month, 1), v: p.amount }];
-    return Array.from({ length: p.installments }, (_, i) => ({ p, m: addMonths(p.month, i), v: p.amount / p.installments })).filter((x) => monthDiff(month, x.m) > 0);
-  });
+  const future = data.purchases
+    .filter((p) => !isMealCard(data, p.cardId))
+    .flatMap((p) => {
+      if (p.recurring) return [{ p, m: addMonths(month, 1), v: p.amount }];
+      return Array.from({ length: p.installments }, (_, i) => ({ p, m: addMonths(p.month, i), v: p.amount / p.installments })).filter((x) => monthDiff(month, x.m) > 0);
+    });
   const futureTotal = future.reduce((a, x) => a + x.v, 0);
   const byMonth: Record<string, number> = {};
   future.forEach((x) => (byMonth[x.m] = (byMonth[x.m] ?? 0) + x.v));
@@ -189,7 +213,7 @@ function Overview() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[2fr_3fr]">
-        <CardBox title="Gastos por categoria">
+        <CardBox title="Gastos por categoria" sub="Contas, cartões e transferências">
           {pie.length === 0 ? <Empty>Sem despesas neste mês.</Empty> : <div className="h-64"><ResponsiveContainer>
             <PieChart><Pie data={pie} dataKey="value" nameKey="name" innerRadius={60} outerRadius={90} stroke="var(--card)" paddingAngle={2}>{pie.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Pie><Tooltip {...tip} /></PieChart>
           </ResponsiveContainer></div>}
